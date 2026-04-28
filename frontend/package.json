@@ -1,0 +1,45 @@
+{
+  "name": "sentiment-analysis-frontend",
+  "version": "1.0.0",
+  "description": "Product Review Sentiment Analysis - React Frontend",
+  "private": true,
+  "scripts": {
+    "start":   "react-scripts start",
+    "build":   "react-scripts build",
+    "test":    "react-scripts test",
+    "eject":   "react-scripts eject",
+    "lint":    "eslint src/ --ext .js,.jsx",
+    "format":  "prettier --write src/"
+  },
+  "dependencies": {
+    "react":                  "^18.2.0",
+    "react-dom":              "^18.2.0",
+    "react-scripts":          "5.0.1",
+    "react-router-dom":       "^6.22.3",
+    "axios":                  "^1.6.8",
+    "recharts":               "^2.12.2",
+    "react-dropzone":         "^14.2.3",
+    "react-hot-toast":        "^2.4.1",
+    "lucide-react":           "^0.363.0",
+    "papaparse":              "^5.4.1",
+    "clsx":                   "^2.1.0"
+  },
+  "devDependencies": {
+    "tailwindcss":            "^3.4.1",
+    "autoprefixer":           "^10.4.19",
+    "postcss":                "^8.4.38",
+    "eslint":                 "^8.57.0",
+    "prettier":               "^3.2.5",
+    "@testing-library/react": "^14.2.2",
+    "@testing-library/jest-dom": "^6.4.2",
+    "@testing-library/user-event": "^14.5.2"
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+  },
+  "proxy": "http://backend:8000",
+  "eslintConfig": {
+    "extends": ["react-app", "react-app/jest"]
+  }
+}

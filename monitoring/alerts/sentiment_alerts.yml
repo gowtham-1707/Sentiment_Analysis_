@@ -1,0 +1,206 @@
+groups:
+  - name: api_health
+    interval: 30s
+    rules:
+
+      - alert: SentimentAPIDown
+        expr: up{job="sentiment_backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     mlops
+        annotations:
+          summary:     "Sentiment Analysis API is DOWN"
+          description: >
+            The Sentiment Analysis FastAPI backend has been
+            unreachable for more than 1 minute.
+            Check: docker ps | grep sentiment_backend
+
+      - alert: ModelNotLoaded
+        expr: sentiment_model_loaded == 0
+        for: 2m
+        labels:
+          severity: critical
+          team:     mlops
+        annotations:
+          summary:     "ML model is NOT loaded"
+          description: >
+            The sentiment model has been unloaded or failed to
+            initialize for more than 2 minutes.
+            All /predict calls will return 503.
+
+      - alert: MLflowDisconnected
+        expr: sentiment_mlflow_connected == 0
+        for: 5m
+        labels:
+          severity: warning
+          team:     mlops
+        annotations:
+          summary:     "MLflow tracking server is unreachable"
+          description: >
+            The MLflow server has been unreachable for 5 minutes.
+            Model loading will fall back to local files.
+            New experiments cannot be tracked.
+
+  - name: prediction_quality
+    interval: 30s
+    rules:
+
+      - alert: HighPredictionErrorRate
+        expr: |
+          (
+            rate(sentiment_prediction_errors_total[5m])
+            /
+            (rate(sentiment_predictions_total[5m]) + 0.001)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team:     mlops
+        annotations:
+          summary:     "Prediction error rate exceeds 5%"
+          description: >
+            Current error rate: {{ $value | humanizePercentage }}.
+            Threshold: 5%. Check backend logs for root cause.
+
+      - alert: HighInferenceLatency
+        expr: |
+          histogram_quantile(
+            0.99,
+            rate(sentiment_prediction_latency_seconds_bucket[5m])
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          team:     mlops
+        annotations:
+          summary:     "p99 inference latency exceeds 200ms SLA"
+          description: >
+            p99 latency: {{ $value | humanizeDuration }}.
+            Target SLA: 200ms. Consider scaling backend workers.
+
+      - alert: NoPredictionsReceived
+        expr: |
+          rate(sentiment_predictions_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          team:     mlops
+        annotations:
+          summary:     "No predictions received in 15 minutes"
+          description: >
+            The API has received zero prediction requests
+            in the last 15 minutes. Verify frontend connectivity.
+
+      - alert: LowPredictionConfidence
+        expr: |
+          histogram_quantile(
+            0.50,
+            rate(sentiment_prediction_confidence_bucket[10m])
+          ) < 0.65
+        for: 10m
+        labels:
+          severity: warning
+          team:     mlops
+        annotations:
+          summary:     "Median prediction confidence below 65%"
+          description: >
+            Median confidence: {{ $value | humanizePercentage }}.
+            This may indicate data drift or model degradation.
+  - name: data_drift
+    interval: 60s
+    rules:
+
+      - alert: DataDriftDetected
+        expr: sentiment_data_drift_score > 0.3
+        for: 10m
+        labels:
+          severity: warning
+          team:     mlops
+        annotations:
+          summary:     "Data drift detected in incoming reviews"
+          description: >
+            Drift score for feature '{{ $labels.feature }}':
+            {{ $value | humanize }} > 0.3 threshold.
+            Consider retraining the model on fresh data.
+
+      - alert: SevereDataDrift
+        expr: sentiment_data_drift_score > 0.6
+        for: 5m
+        labels:
+          severity: critical
+          team:     mlops
+        annotations:
+          summary:     "SEVERE data drift — model retraining required"
+          description: >
+            Drift score: {{ $value | humanize }}.
+            Model predictions may be highly unreliable.
+            Trigger retraining pipeline immediately.
+      - alert: SentimentDistributionShift
+        expr: |
+          abs(
+            sentiment_label_distribution_ratio{sentiment="Positive"}
+            - 0.6
+          ) > 0.25
+        for: 15m
+        labels:
+          severity: warning
+          team:     mlops
+        annotations:
+          summary:     "Sentiment distribution shifted significantly"
+          description: >
+            Positive sentiment ratio has shifted by > 25% from
+            training baseline. This may indicate concept drift
+            or a change in user behavior.
+
+  - name: infrastructure
+    interval: 30s
+    rules:
+
+      - alert: HighCPUUsage
+        expr: |
+          100 - (
+            avg by(instance)
+            (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100
+          ) > 85
+        for: 5m
+        labels:
+          severity: warning
+          team:     infrastructure
+        annotations:
+          summary:     "CPU usage above 85%"
+          description: >
+            Instance {{ $labels.instance }} CPU: {{ $value | humanize }}%.
+            Consider reducing batch sizes or scaling resources.
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            1 - (
+              node_memory_MemAvailable_bytes
+              / node_memory_MemTotal_bytes
+            )
+          ) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team:     infrastructure
+        annotations:
+          summary:     "Memory usage above 85%"
+          description: >
+            Memory usage: {{ $value | humanize }}%.
+            Available: {{ $value | humanize }} bytes.
+      - alert: LowDiskSpace
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"}
+            / node_filesystem_size_bytes{mountpoint="/"}
+          ) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+          team:     infrastructure
+        annotations:
+          summary:     "Disk space below 15%"
+          description: >
+            Available disk: {{ $value | humanize }}%.
+            Clean up old model artifacts or DVC cache.

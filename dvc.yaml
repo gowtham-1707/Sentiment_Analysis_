@@ -1,0 +1,209 @@
+
+stages:
+
+  ingest:
+    cmd: python training/ingest.py
+    deps:
+      - training/ingest.py
+      - training/params.yaml
+    params:
+      - training/params.yaml:
+          - data.dataset_name
+          - data.dataset_config
+          - data.sample_size
+          - data.random_seed
+    outs:
+      - data/raw/reviews.csv:
+          cache: true           
+          persist: false        
+    desc: >
+      Downloads Amazon Reviews dataset from HuggingFace.
+      Falls back to Kaggle if HuggingFace is unavailable.
+      Output is DVC-tracked to avoid redundant downloads.
+
+  validate:
+    cmd: python training/validate.py
+    deps:
+      - training/validate.py
+      - training/params.yaml
+      - data/raw/reviews.csv
+    params:
+      - training/params.yaml:
+          - data.label_map
+    outs:
+      - data/logs/validation_report.json:
+          cache: false          
+    metrics:
+      - data/logs/data_quality_metrics.json:
+          cache: false
+    desc: >
+      Validates raw data quality: column existence, row count,
+      null rates, star rating range, duplicate percentage,
+      and class distribution balance.
+  clean:
+    cmd: python training/clean.py
+    deps:
+      - training/clean.py
+      - training/params.yaml
+      - data/raw/reviews.csv
+    params:
+      - training/params.yaml:
+          - data.label_map
+          - data.random_seed
+          - preprocessing.min_token_length
+    outs:
+      - data/raw/reviews_clean.csv:
+          cache: true
+      - data/processed/baseline_stats.json:
+          cache: false          
+    desc: >
+      Drops nulls, duplicates, invalid ratings.
+      Filters reviews by length (5-500 words).
+      Maps star ratings to sentiment labels (0/1/2).
+      Computes and saves baseline statistics for drift detection.
+  preprocess:
+    cmd: python training/preprocess.py
+    deps:
+      - training/preprocess.py
+      - training/params.yaml
+      - backend/app/services/preprocessor.py
+      - data/raw/reviews_clean.csv
+    params:
+      - training/params.yaml:
+          - preprocessing.remove_stopwords
+          - preprocessing.lemmatize
+          - preprocessing.min_token_length
+          - preprocessing.language
+    outs:
+      - data/raw/reviews_preprocessed.csv:
+          cache: true
+    desc: >
+      Applies full NLP pipeline to each review:
+      lowercase → HTML removal → URL removal →
+      contraction expansion → special char removal →
+      tokenization → stopword removal (keeping negations) →
+      lemmatization.
+  split:
+    cmd: python training/split.py
+    deps:
+      - training/split.py
+      - training/params.yaml
+      - data/raw/reviews_preprocessed.csv
+    params:
+      - training/params.yaml:
+          - data.train_ratio
+          - data.val_ratio
+          - data.test_ratio
+          - data.random_seed
+    outs:
+      - data/processed/splits.pkl:
+          cache: true
+    metrics:
+      - data/logs/split_metrics.json:
+          cache: false
+    desc: >
+      Stratified train/val/test split (70/15/15).
+      Preserves class distribution across all splits.
+      Saves splits as a single joblib pickle file.
+  featurize:
+    cmd: python training/featurize.py
+    deps:
+      - training/featurize.py
+      - training/params.yaml
+      - data/processed/splits.pkl
+    params:
+      - training/params.yaml:
+          - preprocessing.tfidf.max_features
+          - preprocessing.tfidf.ngram_range
+          - preprocessing.tfidf.min_df
+          - preprocessing.tfidf.max_df
+          - preprocessing.tfidf.sublinear_tf
+          - preprocessing.tfidf.analyzer
+          - preprocessing.tfidf.strip_accents
+    outs:
+      - data/processed/features.pkl:
+          cache: true
+      - data/processed/tfidf_vectorizer.pkl:
+          cache: true
+    metrics:
+      - data/logs/feature_metrics.json:
+          cache: false
+    desc: >
+      Fits TF-IDF vectorizer on training set ONLY (no leakage).
+      Transforms train/val/test splits.
+      Saves fitted vectorizer + all feature matrices.
+  train:
+    cmd: python training/train.py --params training/params.yaml
+    deps:
+      - training/train.py
+      - training/params.yaml
+      - backend/app/services/preprocessor.py
+      - data/processed/features.pkl
+    params:
+      - training/params.yaml:
+          - model.active_model
+          - model.logistic_regression
+          - model.xgboost
+          - training.experiment_name
+          - training.run_name
+          - training.cv_folds
+          - training.acceptance_criteria
+    outs:
+      - models/sentiment_model.pkl:
+          cache: true
+      - models/tfidf_vectorizer.pkl:
+          cache: true
+    metrics:
+      - data/logs/train_metrics.json:
+          cache: false
+    plots:
+      - data/evaluation/confusion_matrix.png:
+          cache: false
+      - data/evaluation/roc_curve.png:
+          cache: false
+    desc: >
+      Trains TF-IDF + Classifier pipeline with full MLflow tracking.
+      Logs params, metrics, artifacts to MLflow experiment.
+      Registers model to MLflow Model Registry.
+      Auto-promotes to Staging if acceptance criteria met:
+        F1 >= 0.82, Accuracy >= 0.82, Latency <= 200ms.
+  evaluate:
+    cmd: >
+      python training/evaluate.py
+      --stage Staging
+      --params training/params.yaml
+    deps:
+      - training/evaluate.py
+      - training/params.yaml
+      - data/processed/features.pkl
+    params:
+      - training/params.yaml:
+          - training.model_name
+          - training.acceptance_criteria
+          - evaluation.metrics
+    outs:
+      - data/evaluation/evaluation_report.json:
+          cache: false
+      - data/evaluation/evaluation_report.txt:
+          cache: false
+      - data/evaluation/confusion_matrix_eval.png:
+          cache: false
+      - data/evaluation/roc_curves_eval.png:
+          cache: false
+      - data/evaluation/per_class_metrics.png:
+          cache: false
+    metrics:
+      - data/logs/eval_metrics.json:
+          cache: false
+    desc: >
+      Evaluates the Staging model on the held-out test set.
+      Generates confusion matrix, ROC curves, per-class metrics.
+      Checks acceptance criteria and logs results to MLflow.
+      Produces human-readable and JSON evaluation reports.
+
+plots:
+  - data/evaluation/confusion_matrix.png
+  - data/evaluation/roc_curve.png
+  - data/evaluation/confusion_matrix_eval.png
+  - data/evaluation/roc_curves_eval.png
+  - data/evaluation/per_class_metrics.png

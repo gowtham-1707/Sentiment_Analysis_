@@ -1,0 +1,122 @@
+global:
+  scrape_interval:     15s
+  scrape_timeout:      10s
+  evaluation_interval: 15s
+  external_labels:
+    monitor:     "sentiment-mlops"
+    environment: "production"
+
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+  - "/etc/prometheus/alerts/*.yaml"
+scrape_configs:
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+          component: "monitoring"
+
+  - job_name: "sentiment_backend"
+    scrape_interval: 10s        
+    scrape_timeout:  8s
+    metrics_path:    "/metrics"
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service:   "sentiment-api"
+          component: "backend"
+          language:  "python"
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "sentiment_.*"
+        action: keep              
+
+  - job_name: "alertmanager"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels:
+          service:   "alertmanager"
+          component: "monitoring"
+
+
+# =============================================================
+# ALERT RULES
+# File: monitoring/alerts/sentiment_alerts.yml
+# =============================================================
+
+# NOTE: Create monitoring/alerts/sentiment_alerts.yml with:
+#
+# groups:
+#   - name: sentiment_alerts
+#     rules:
+#
+#       # Alert: High error rate (> 5%)
+#       - alert: HighPredictionErrorRate
+#         expr: |
+#           rate(sentiment_prediction_errors_total[5m]) /
+#           rate(sentiment_predictions_total[5m]) > 0.05
+#         for: 2m
+#         labels:
+#           severity: critical
+#         annotations:
+#           summary: "High prediction error rate detected"
+#           description: "Error rate {{ $value | humanizePercentage }} > 5%"
+#
+#       # Alert: High latency (p99 > 200ms)
+#       - alert: HighInferenceLatency
+#         expr: |
+#           histogram_quantile(0.99,
+#             rate(sentiment_prediction_latency_seconds_bucket[5m])
+#           ) > 0.2
+#         for: 5m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "p99 inference latency exceeds 200ms"
+#           description: "p99 latency is {{ $value | humanizeDuration }}"
+#
+#       # Alert: Model not loaded
+#       - alert: ModelNotLoaded
+#         expr: sentiment_model_loaded == 0
+#         for: 1m
+#         labels:
+#           severity: critical
+#         annotations:
+#           summary: "Sentiment model is not loaded"
+#           description: "The ML model has been unloaded for > 1 minute"
+#
+#       # Alert: MLflow disconnected
+#       - alert: MLflowDisconnecteda
+#         expr: sentiment_mlflow_connected == 0
+#         for: 5m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "MLflow tracking server is unreachable"
+#
+#       # Alert: Data drift detected
+#       - alert: DataDriftDetected
+#         expr: sentiment_data_drift_score > 0.3
+#         for: 10m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "Data drift detected in incoming reviews"
+#           description: "Drift score {{ $value }} > 0.3 threshold"
+#
+#       # Alert: API down
+#       - alert: SentimentAPIDown
+#         expr: up{job="sentiment_backend"} == 0
+#         for: 1m
+#         labels:
+#           severity: critical
+#         annotations:
+#           summary: "Sentiment Analysis API is down"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]

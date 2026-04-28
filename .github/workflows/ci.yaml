@@ -1,0 +1,322 @@
+name: Sentiment Analysis CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+env:
+  PYTHON_VERSION:   "3.10"
+  NODE_VERSION:     "20"
+  MLFLOW_TRACKING_URI: "http://localhost:5000"
+
+jobs:
+
+  lint:
+    name: "Lint & Code Quality"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install linting tools
+        run: |
+          pip install flake8 black isort --quiet
+
+      - name: Run flake8 (PEP8 check)
+        run: |
+          flake8 backend/app/ training/ \
+            --max-line-length=100 \
+            --exclude=__pycache__,.venv \
+            --statistics
+        continue-on-error: false
+
+      - name: Run black (formatting check)
+        run: |
+          black backend/app/ training/ --check --diff --line-length=100
+
+      - name: Run isort (import ordering check)
+        run: |
+          isort backend/app/ training/ --check-only --diff
+
+  test-backend:
+    name: "Backend Unit Tests"
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+
+      - name: Download NLTK data
+        run: |
+          python -c "
+          import nltk
+          nltk.download('stopwords', quiet=True)
+          nltk.download('wordnet',   quiet=True)
+          nltk.download('omw-1.4',   quiet=True)
+          nltk.download('punkt',     quiet=True)
+          "
+
+      - name: Run pytest with coverage
+        working-directory: backend
+        env:
+          MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
+          MODEL_NAME:          "sentiment_classifier"
+          MODEL_STAGE:         "Production"
+        run: |
+          pytest tests/ \
+            -v \
+            --tb=short \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=70 \
+            -m "not integration"
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          file:  backend/coverage.xml
+          flags: backend
+          name:  backend-coverage
+        continue-on-error: true
+
+      - name: Upload test results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            backend/coverage.xml
+            backend/coverage_html/
+
+  dvc-check:
+    name: "DVC Pipeline Check"
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install DVC
+        run: |
+          pip install dvc --quiet
+
+      - name: Initialize DVC
+        run: |
+          dvc init --no-scm 2>/dev/null || true
+
+      - name: Validate dvc.yaml syntax
+        run: |
+          python -c "
+          import yaml
+          with open('dvc.yaml', 'r') as f:
+              config = yaml.safe_load(f)
+          stages = config.get('stages', {})
+          print(f'dvc.yaml valid — {len(stages)} stages found:')
+          for name in stages:
+              print(f'   • {name}')
+          "
+
+      - name: Validate params.yaml syntax
+        run: |
+          python -c "
+          import yaml
+          with open('training/params.yaml', 'r') as f:
+              params = yaml.safe_load(f)
+          print('params.yaml valid')
+          print(f'   model: {params[\"model\"][\"active_model\"]}')
+          print(f'   dataset: {params[\"data\"][\"dataset_name\"]}')
+          print(f'   sample_size: {params[\"data\"][\"sample_size\"]}')
+          "
+
+      - name: Show DVC DAG
+        run: |
+          dvc dag 2>/dev/null || echo "DAG requires pipeline run first"
+
+  docker-build:
+    name: "Docker Build Validation"
+    runs-on: ubuntu-latest
+    needs: test-backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context:   ./backend
+          file:      ./backend/Dockerfile
+          push:      false
+          tags:      sentiment-backend:ci
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context:   ./frontend
+          file:      ./frontend/Dockerfile
+          push:      false
+          tags:      sentiment-frontend:ci
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Validate docker-compose.yml syntax
+        run: |
+          docker compose config --quiet
+          echo "docker-compose.yml is valid"
+
+  schema-check:
+    name: "API Schema Check"
+    runs-on: ubuntu-latest
+    needs: test-backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt --quiet
+
+      - name: Export and validate OpenAPI schema
+        working-directory: backend
+        run: |
+          python -c "
+          import json, sys
+          sys.path.insert(0, '.')
+
+          # Mock model service to avoid loading real model
+          from unittest.mock import MagicMock, patch
+          from app.schemas.request import SentimentLabel
+
+          mock_service = MagicMock()
+          mock_service.is_loaded = True
+
+          with patch('app.main.ModelService') as mock_cls:
+              mock_cls.return_value = mock_service
+              from app.main import app
+              schema = app.openapi()
+
+          # Validate required endpoints exist
+          paths = schema.get('paths', {})
+          required_paths = [
+              '/health', '/ready', '/ping', '/info',
+              '/api/v1/predict',
+              '/api/v1/predict/bulk',
+              '/api/v1/predict/csv',
+          ]
+          for path in required_paths:
+              assert path in paths, f'Missing endpoint: {path}'
+              print(f'{path}')
+
+          print(f'OpenAPI schema valid — {len(paths)} endpoints defined')
+
+          # Save schema for artifact
+          with open('openapi_schema.json', 'w') as f:
+              json.dump(schema, f, indent=2)
+          "
+
+      - name: Upload OpenAPI schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: backend/openapi_schema.json
+
+  security-scan:
+    name: "Security Scan"
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Safety
+        run: pip install safety --quiet
+
+      - name: Run dependency vulnerability scan
+        run: |
+          safety check \
+            -r backend/requirements.txt \
+            --ignore 70612 \
+            --output text \
+            || true
+        continue-on-error: true
+
+  ci-summary:
+    name: "CI Summary"
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - test-backend
+      - dvc-check
+      - docker-build
+      - schema-check
+      - security-scan
+    if: always()
+
+    steps:
+      - name: Report CI Status
+        run: |
+          echo "================================================"
+          echo "  Sentiment Analysis MLOps — CI Summary"
+          echo "================================================"
+          echo "  Lint:          ${{ needs.lint.result }}"
+          echo "  Tests:         ${{ needs.test-backend.result }}"
+          echo "  DVC Check:     ${{ needs.dvc-check.result }}"
+          echo "  Docker Build:  ${{ needs.docker-build.result }}"
+          echo "  Schema Check:  ${{ needs.schema-check.result }}"
+          echo "  Security Scan: ${{ needs.security-scan.result }}"
+          echo "================================================"
+          if [[ "${{ needs.lint.result }}"        == "failure" || \
+                "${{ needs.test-backend.result }}" == "failure" || \
+                "${{ needs.docker-build.result }}" == "failure" ]]; then
+            echo "Critical CI jobs failed!"
+            exit 1
+          else
+            echo "All critical CI jobs passed!"
+          fi

@@ -1,0 +1,111 @@
+data:
+  dataset_name: "amazon_reviews_multi"
+  dataset_config: "en"                 
+  raw_path: "data/raw/reviews.csv"
+  processed_path: "data/processed/features.pkl"
+  vectorizer_path: "data/processed/tfidf_vectorizer.pkl"
+
+  sample_size: 200000                   
+  random_seed: 42
+
+  train_ratio: 0.70
+  val_ratio:   0.15
+  test_ratio:  0.15
+
+  label_map:
+    1: 0
+    2: 0
+    3: 1
+    4: 2
+    5: 2
+
+  class_names:
+    - "Negative"
+    - "Neutral"
+    - "Positive"
+
+preprocessing:
+  remove_stopwords: true
+  lemmatize: true
+  min_token_length: 2
+  language: "english"
+
+  tfidf:
+    max_features: 50000         
+    ngram_range: [1, 2]         
+    min_df: 2                    
+    max_df: 0.95                
+    sublinear_tf: true          
+    analyzer: "word"
+    strip_accents: "unicode"
+
+  baseline:
+    avg_review_length: 85.4     
+    std_review_length: 62.1     
+    vocab_size: 48523           
+model:
+  active_model: "logistic_regression"
+  logistic_regression:
+    C: 1.0                      
+    max_iter: 1000              
+    solver: "saga"              
+    multi_class: "multinomial"  
+    class_weight: "balanced"    
+    n_jobs: -1                  
+    random_state: 42
+    tol: 0.001                 
+  xgboost:
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.1
+    subsample: 0.8
+    colsample_bytree: 0.8
+    use_label_encoder: false
+    eval_metric: "mlogloss"
+    n_jobs: -1
+    random_state: 42
+    early_stopping_rounds: 10
+
+training:
+  experiment_name: "sentiment_analysis"
+  run_name: "tfidf_logistic_regression_v1"
+
+  model_name: "sentiment_classifier"
+  register_model: true
+  promote_to_staging: true
+  acceptance_criteria:
+    min_f1_score: 0.82
+    min_accuracy: 0.82
+    max_inference_latency_ms: 200
+
+  cv_folds: 5
+  cv_scoring: "f1_macro"
+
+  log_artifacts:
+    - "confusion_matrix.png"
+    - "classification_report.txt"
+    - "feature_importance.png"
+    - "roc_curve.png"
+
+evaluation:
+  metrics:
+    - "accuracy"
+    - "f1_macro"
+    - "f1_weighted"
+    - "precision_macro"
+    - "recall_macro"
+    - "roc_auc_ovr"             
+  output_dir: "data/evaluation"
+  confusion_matrix_path: "data/evaluation/confusion_matrix.png"
+  classification_report_path: "data/evaluation/classification_report.txt"
+  roc_curve_path: "data/evaluation/roc_curve.png"
+
+mlflow:
+  tracking_uri: "http://localhost:5000"   
+  artifact_location: "mlflow/artifacts"
+
+  tags:
+    project: "sentiment-analysis-mlops"
+    team: "student"
+    framework: "scikit-learn"
+    dataset: "amazon_reviews_multi"

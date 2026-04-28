@@ -1,0 +1,176 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost:     "sandbox.smtp.mailtrap.io:587"
+  smtp_from:          "alerts@sentiment-mlops.dev"
+  smtp_auth_username: "b0c39fbb38055c"
+  smtp_auth_password: "1de446adaf1250"
+  smtp_require_tls:   true
+
+route:
+  receiver: "mailtrap-warnings"
+  group_by: ["alertname", "severity"]
+  group_wait:      30s
+  group_interval:  5m
+  repeat_interval: 3h
+
+  routes:
+    - match:
+        severity: critical
+      receiver: "mailtrap-critical"
+      group_wait:      10s
+      repeat_interval: 1h
+      continue: false
+    - match:
+        severity: warning
+      receiver: "mailtrap-warnings"
+      group_wait:      60s
+      repeat_interval: 6h
+      continue: false
+
+receivers:
+  - name: "mailtrap-critical"
+    email_configs:
+      - to: "ma24c051@smail.iitm.ac.in"
+        send_resolved: true
+        headers:
+          subject: '[CRITICAL] {{ .GroupLabels.alertname }} — Sentiment MLOps'
+        html: |
+          <!DOCTYPE html>
+          <html>
+          <body style="font-family:Arial,sans-serif;padding:20px;background:#f8f8f8">
+            <div style="max-width:600px;margin:0 auto;background:white;
+                        border-radius:8px;padding:24px;
+                        border-left:5px solid #ef4444">
+              <h2 style="color:#ef4444;margin-top:0">
+                CRITICAL ALERT - Sentiment Analysis MLOps
+              </h2>
+
+              {{ range .Alerts }}
+              <div style="margin:16px 0;padding:12px;
+                          background:#fef2f2;border-radius:6px">
+                <p style="margin:0 0 8px 0">
+                  <b style="color:#991b1b">
+                    Alert: {{ .Labels.alertname }}
+                  </b>
+                </p>
+                <p style="margin:0 0 4px 0;color:#555">
+                  <b>Summary:</b> {{ .Annotations.summary }}
+                </p>
+                <p style="margin:0 0 4px 0;color:#555">
+                  <b>Description:</b> {{ .Annotations.description }}
+                </p>
+                <p style="margin:0 0 4px 0;color:#555">
+                  <b>Severity:</b> {{ .Labels.severity }}
+                </p>
+                <p style="margin:0;color:#999;font-size:12px">
+                  Started: {{ .StartsAt }}
+                </p>
+              </div>
+              {{ end }}
+
+              <hr style="border:none;border-top:1px solid #eee">
+              <div style="margin-top:16px">
+                <a href="http://localhost:3001"
+                   style="margin-right:12px;color:#6366f1">
+                  Grafana Dashboard
+                </a>
+                <a href="http://localhost:9090/alerts"
+                   style="margin-right:12px;color:#6366f1">
+                  Prometheus Alerts
+                </a>
+                <a href="http://localhost:9093"
+                   style="color:#6366f1">
+                  Alertmanager
+                </a>
+              </div>
+              <p style="margin-top:20px;color:#999;font-size:11px">
+                Sentiment Analysis MLOps Monitoring System
+              </p>
+            </div>
+          </body>
+          </html>
+
+
+  - name: "mailtrap-warnings"
+    email_configs:
+      - to: "ma24c051@smail.iitm.ac.in"
+        send_resolved: true
+        headers:
+          subject: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }} — Sentiment MLOps'
+        html: |
+          <!DOCTYPE html>
+          <html>
+          <body style="font-family:Arial,sans-serif;padding:20px;background:#f8f8f8">
+            <div style="max-width:600px;margin:0 auto;background:white;
+                        border-radius:8px;padding:24px;
+                        border-left:5px solid #f59e0b">
+              <h2 style="color:#b45309;margin-top:0">
+                WARNING - Sentiment Analysis MLOps
+              </h2>
+
+              <table style="width:100%;border-collapse:collapse;margin-top:16px">
+                <thead>
+                  <tr style="background:#fef9c3">
+                    <th style="padding:8px 12px;text-align:left;
+                                border:1px solid #fde68a;color:#78350f">
+                      Alert
+                    </th>
+                    <th style="padding:8px 12px;text-align:left;
+                                border:1px solid #fde68a;color:#78350f">
+                      Description
+                    </th>
+                    <th style="padding:8px 12px;text-align:left;
+                                border:1px solid #fde68a;color:#78350f">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{ range .Alerts }}
+                  <tr>
+                    <td style="padding:8px 12px;border:1px solid #fde68a;
+                                font-weight:bold;color:#333">
+                      {{ .Labels.alertname }}
+                    </td>
+                    <td style="padding:8px 12px;border:1px solid #fde68a;
+                                color:#555;font-size:13px">
+                      {{ .Annotations.description }}
+                    </td>
+                    <td style="padding:8px 12px;border:1px solid #fde68a;
+                                color:#555">
+                      {{ .Status }}
+                    </td>
+                  </tr>
+                  {{ end }}
+                </tbody>
+              </table>
+
+              <div style="margin-top:16px">
+                <a href="http://localhost:3001"
+                   style="margin-right:12px;color:#6366f1">
+                  Grafana Dashboard
+                </a>
+                <a href="http://localhost:9090/alerts"
+                   style="color:#6366f1">
+                  Prometheus Alerts
+                </a>
+              </div>
+              <p style="margin-top:20px;color:#999;font-size:11px">
+                Sentiment Analysis MLOps Monitoring System
+              </p>
+            </div>
+          </body>
+          </html>
+
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ["alertname"]
+
+  - source_match:
+      alertname: SentimentAPIDown
+    target_match:
+      alertname: ModelNotLoaded
+    equal: []
