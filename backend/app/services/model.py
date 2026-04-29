@@ -8,6 +8,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 from loguru import logger
+from sklearn.pipeline import Pipeline
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -57,7 +58,6 @@ class ModelService:
         model_uri = f"models:/{MODEL_NAME}/{MODEL_STAGE}"
         try:
             loaded = mlflow.sklearn.load_model(model_uri)
-            from sklearn.pipeline import Pipeline
             if isinstance(loaded, Pipeline):
                 self.model      = loaded
                 self.vectorizer = None  # Vectorizer is inside the pipeline
@@ -118,7 +118,11 @@ class ModelService:
         self.model_version = "local"
         self.model_stage   = "local"
         logger.info(f"Model loaded from local path: {LOCAL_MODEL_PATH}")
-        self._load_vectorizer_local()
+        if isinstance(self.model, Pipeline):
+            self.vectorizer = None
+            logger.info("Loaded local sklearn Pipeline (vectorizer + classifier bundled)")
+        else:
+            self._load_vectorizer_local()
 
     def load_model(self) -> None:
         try:
@@ -149,7 +153,6 @@ class ModelService:
 
     def _vectorize(self, clean_texts: List[str]) -> np.ndarray:
     
-        from sklearn.pipeline import Pipeline
         if isinstance(self.model, Pipeline):
             return clean_texts
         return self.vectorizer.transform(clean_texts)
@@ -199,7 +202,6 @@ class ModelService:
             }
 
         features = self._vectorize([clean_text])
-        from sklearn.pipeline import Pipeline
         if isinstance(self.model, Pipeline):
             predicted_class  = int(self.model.predict([clean_text])[0])
             probabilities    = self.model.predict_proba([clean_text])[0]
@@ -231,7 +233,6 @@ class ModelService:
         logger.info(f"Running batch inference on {len(review_texts)} reviews...")
         start_time = time.time()
         clean_texts = self.preprocessor.preprocess_batch(review_texts)
-        from sklearn.pipeline import Pipeline
         if isinstance(self.model, Pipeline):
             predicted_classes = self.model.predict(clean_texts)
             all_probabilities = self.model.predict_proba(clean_texts)

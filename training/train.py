@@ -35,6 +35,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.app.services.preprocessor import get_preprocessor
 
+LOCAL_MODEL_PATH = os.getenv("LOCAL_MODEL_PATH", "/app/models/sentiment_model.pkl")
+LOCAL_VECTORIZER_PATH = os.getenv(
+    "LOCAL_VECTORIZER_PATH",
+    "/app/models/tfidf_vectorizer.pkl",
+)
+
 def load_params(params_path: str = "training/params.yaml") -> dict:
     with open(params_path, "r") as f:
         params = yaml.safe_load(f)
@@ -246,6 +252,19 @@ def run_cross_validation(
     )
     return cv_results
 
+
+def save_local_artifacts(pipeline: Pipeline) -> None:
+    """Persist local fallback artifacts for the backend container."""
+    os.makedirs(os.path.dirname(LOCAL_MODEL_PATH), exist_ok=True)
+    joblib.dump(pipeline, LOCAL_MODEL_PATH)
+    logger.info(f"Local fallback model saved to {LOCAL_MODEL_PATH}")
+
+    tfidf_step = pipeline.named_steps.get("tfidf")
+    if tfidf_step is not None:
+        os.makedirs(os.path.dirname(LOCAL_VECTORIZER_PATH), exist_ok=True)
+        joblib.dump(tfidf_step, LOCAL_VECTORIZER_PATH)
+        logger.info(f"Local fallback vectorizer saved to {LOCAL_VECTORIZER_PATH}")
+
 def train(params_path: str = "training/params.yaml") -> None:
     """
     Full training pipeline with MLflow tracking.
@@ -317,6 +336,7 @@ def train(params_path: str = "training/params.yaml") -> None:
 
         logger.info(f"Training complete | time={train_time}s")
         mlflow.log_metric("training_time_seconds", train_time)
+        save_local_artifacts(pipeline)
         logger.info("Evaluating on validation set...")
         y_val_pred  = pipeline.predict(X_val)
         y_val_proba = pipeline.predict_proba(X_val)

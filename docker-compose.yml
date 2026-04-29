@@ -18,6 +18,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - mlflow_data:/mlflow:ro
     depends_on:
       - mlflow
     networks:
@@ -92,7 +93,9 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${POSTGRES_DB:-airflow}
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-sentiment_secret_key_2024}
-      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - AIRFLOW__WEBSERVER__WORKERS=1
+      - AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT=300
+      - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./data:/opt/airflow/data
@@ -104,8 +107,9 @@ services:
       bash -c "
         set -e;
         airflow db migrate;
+        airflow dags unpause sentiment_data_pipeline || true;
         airflow users create --username ${AIRFLOW_ADMIN_USERNAME:-admin} --password ${AIRFLOW_ADMIN_PASSWORD:-admin} --firstname ${AIRFLOW_ADMIN_FIRSTNAME:-Admin} --lastname ${AIRFLOW_ADMIN_LASTNAME:-User} --role Admin --email ${AIRFLOW_ADMIN_EMAIL:-admin@sentiment.com} || true;
-        airflow webserver --port 8080 &
+        airflow webserver --port 8080 --workers 1 &
         exec airflow scheduler
       "
     networks:
@@ -187,6 +191,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - mlflow_data:/mlflow
     depends_on:
       - mlflow
     networks:
@@ -211,3 +216,4 @@ volumes:
     driver: local
   alertmanager_data:
     driver: local
+
